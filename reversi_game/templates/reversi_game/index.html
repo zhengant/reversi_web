@@ -1,0 +1,212 @@
+<html>
+    <body onload='init()'>
+        <h1 id='black_score'>BLACK: 2</h1>
+        <h1 id='white_score'>WHITE: 2</h1>
+        <h1 id='player'></h1>
+        <h1 id='next'>BLACK to move</h1>
+        <h1 id='status'></h1>
+        <canvas id='board' width='400' height='400'></canvas>
+    </body>
+</html>
+
+<script src="https://cdn.jsdelivr.net/npm/js-cookie@2/src/js.cookie.min.js"></script>
+
+<script>
+    function coords2idx(row, col) {
+        return row*8 + col;
+    }
+
+    function get_mouse_coords(canvas, click_event) {
+        // from https://www.html5canvastutorials.com/advanced/html5-canvas-mouse-coordinates/
+        var rect = canvas.getBoundingClientRect();
+        return {
+          x: click_event.clientX - rect.left,
+          y: click_event.clientY - rect.top
+        };
+    }
+
+    function init() {
+        restart_game();
+        const board_canvas = document.getElementById('board');
+        
+        board_canvas.addEventListener('click', function(click) {
+            if(Cookies.get('next_move') === 'DONE') {
+                restart_game();
+                return;
+            }
+
+            if(Cookies.get('player') !== Cookies.get('next_move')) {
+                return;
+            }
+
+            const coords = get_mouse_coords(board_canvas, click);
+            const board_size = Math.min(board_canvas.getAttribute('width'), board_canvas.getAttribute('height'));
+            const space_size = Math.floor(board_size / 8);
+
+            const row = Math.floor(coords.y / space_size);
+            const col = Math.floor(coords.x / space_size);
+
+            player_move(row, col);
+        });
+    }
+
+    function restart_game() {
+        // init cookies
+        Cookies.set('board', '000000000000000000000000000WB000000BW000000000000000000000000000');
+        Cookies.set('next_move', 'BLACK');
+        const player = Math.random() < 0.5 ? 'BLACK' : 'WHITE'
+        Cookies.set('player', player);
+
+        // init status text
+        document.getElementById('black_score').textContent = 'BLACK: 2';
+        document.getElementById('white_score').textContent = 'WHITE: 2';
+        document.getElementById('player').textContent = 'You are playing ' + player;
+        document.getElementById('next').textContent = 'BLACK to move';
+
+        if(player === 'WHITE') {
+            document.getElementById('status').textContent = 'Agent is making a move...';
+            agent_move();
+        }
+
+        draw_board();
+    }
+
+    function draw_board() {
+        const board = Cookies.get('board')
+        if(board === undefined) {
+            init_game();
+            return;
+        }
+
+        const board_canvas = document.getElementById('board');
+        const board_ctx = board_canvas.getContext('2d');
+        const board_size = Math.min(board_canvas.getAttribute('width'), board_canvas.getAttribute('height'));
+        const space_size = Math.floor(board_size / 8);
+
+        for(var row = 0; row < 8; row++) {
+            for(var col = 0; col < 8; col++) {
+                var x = col * space_size;
+                var y = row * space_size;
+                
+                board_ctx.strokeStyle = 'black';
+                board_ctx.fillStyle = 'green';
+                
+                board_ctx.beginPath();
+                board_ctx.rect(x, y, space_size, space_size);
+                board_ctx.fill();
+                board_ctx.stroke();
+
+                var space_status = board.charAt(coords2idx(row, col))
+                if(space_status !== '0') {
+                    board_ctx.fillStyle = space_status === 'B' ? 'black' : 'white';
+                    var center_x = x + 0.5 * space_size;
+                    var center_y = y + 0.5 * space_size;
+                    var r = 0.8 * 0.5 * space_size;
+
+                    board_ctx.beginPath();
+                    board_ctx.arc(center_x, center_y, r, 0, 2 * Math.PI);
+                    board_ctx.fill();
+                    board_ctx.stroke();
+                }
+            }
+        }
+    }
+
+    function player_move(row, col) {
+        var turn = Cookies.get('next_move');
+        var player = Cookies.get('player');
+
+        if(turn !== player) {
+            return;
+        }
+        var board = Cookies.get('board');
+        var request_data = {
+            board: board,
+            turn: turn == 'BLACK' ? -1 : 1,
+            use_agent: false,
+            row: row,
+            col: col
+        };
+
+        send_request(request_data);
+    }
+
+    function agent_move() {
+        var turn = Cookies.get('next_move');
+        var player = Cookies.get('player');
+
+        if(turn === player) {
+            return;
+        }
+
+        var board = Cookies.get('board');
+        var request_data = {
+            board: board,
+            turn: turn == 'BLACK' ? -1 : 1,
+            use_agent: true,
+            row: -1,
+            col: -1
+        };
+
+        send_request(request_data);
+        
+    }
+
+    function send_request(request_data) {
+        var url = '/reversi_game/move/';
+        url += '?board=' + request_data.board;
+        url += '&turn=' + request_data.turn.toString();
+        url += '&use_agent=' + (request_data.use_agent ? '1' : '0');
+        url += '&row=' + request_data.row.toString();
+        url += '&col=' + request_data.col.toString();
+
+        fetch(url).then(response => response.json())
+        .then(function(res_json) {
+            Cookies.set('board', res_json.board)
+            if(res_json.status === 1) {
+                Cookies.set('next_move', 'WHITE')
+            } else if(res_json.status === -1) {
+                Cookies.set('next_move', 'BLACK')
+            } else {
+                Cookies.set('next_move', 'DONE')
+            }
+            
+            update_display(res_json);
+
+            if(Cookies.get('next_move') !== 'DONE' && 
+                Cookies.get('next_move') !== Cookies.get('player')) {
+                agent_move();
+            }
+        })
+    }
+
+    function update_display(game_data) {
+        valid = game_data.valid;
+        black_count = game_data.black_count;
+        white_count = game_data.white_count;
+
+        if(valid === 0) {
+            document.getElementById('status').textContent = 'Invalid move!';
+            return;
+        }
+
+        document.getElementById('black_score').textContent = 'BLACK: ' + black_count;
+        document.getElementById('white_score').textContent = 'WHITE: ' + white_count;
+        
+        var next = Cookies.get('next_move');
+        if(next === 0) {
+            document.getElementById('next').textContent = 'GAME OVER. Click the board to restart.';        
+        } else {
+            document.getElementById('next').textContent = next + ' to move';
+        }
+
+        draw_board();
+
+        if(next !== Cookies.get('player')) {
+            document.getElementById('status').textContent = 'Agent is making a move...';
+        } else {
+            document.getElementById('status').textContent = 'Your turn to move!';
+        }
+    }
+
+</script>
